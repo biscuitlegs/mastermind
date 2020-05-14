@@ -1,5 +1,6 @@
 #!/usr/bin/ruby
 require 'pry'
+#make computer set codepegs when it guesses
 
 module Validation
     def valid?(guess_or_code)
@@ -12,11 +13,48 @@ module Validation
     end
 end
 
-class Peg
-    attr_accessor :color
+module CodeTools
+    def random_code
+        colors = ["black", "white", "blue", "red", "yellow", "green"]
+        Array.new(4) {Peg.new(colors.sample)}
+    end
 
-    def initialize(color="")
+    def random_color
+        colors = ["black", "white", "blue", "red", "yellow", "green"]
+        colors.sample
+    end
+
+    def get_colors(code)
+        colors = []
+        code.each {|peg| colors.push(peg.color)}
+
+        colors
+    end
+
+    def colors_to_codepegs(colors)
+        colors.split.map {|color| color = Peg.new(color) }
+    end
+
+    def guess_to_keypegs(guess, code, keypegs=Array.new)
+        guess.each_with_index do |peg, i|
+            if guess[i].color == code[i].color
+                keypegs.push(Peg.new("red"))
+            elsif guess[i].color != code[i].color && code.any? {|peg| peg.color == guess[i].color}
+                keypegs.push(Peg.new("white"))
+            end
+        end
+
+        keypegs
+    end
+
+end
+
+class Peg
+    attr_accessor :color, :locked
+
+    def initialize(color="", locked=false)
         @color = color
+        @locked = locked
     end
 end
 
@@ -36,15 +74,19 @@ class Board
         @keypegs[y][x]
     end
 
-    def set_color(y, x, color, type)
-        if type == "codepeg"
-        get_codepeg(y, x).color = color
-        elsif type == "keypeg"
-        get_keypeg(y, x).color = color
+    def set_codepegs(guess, turn)
+        guess.each_with_index do |peg, index|
+            @codepegs[turn][index].color = peg.color
         end
     end
 
-    def win?
+    def set_keypegs(guess, turn)
+        guess.each_with_index do |peg, index|
+            @keypegs[turn][index].color = peg.color
+        end
+    end
+
+    def cracked_code?
         @keypegs.each {|set| return true if set.all? {|peg| peg.color == "red"}}
         
         false
@@ -66,10 +108,11 @@ class Player
     def choose_name
         puts "Player, please enter your name:\n"
         @name = gets.chomp
+        puts "\n"
     end
 
     def choose_role
-        puts "Player, please choose your role:\n"
+        puts "#{@name}, please choose your role:\n"
         role = gets.chomp
 
         while !valid_role?(role)
@@ -89,7 +132,7 @@ class Player
             code = gets.chomp
         end
 
-        @code = code.split
+        @code = code.split.map {|color| color = Peg.new(color) }
     end
 
 
@@ -112,6 +155,7 @@ end
 
 class Computer
     attr_reader :code, :role, :guess
+    include CodeTools
 
     def initialize(role="codemaker", code=random_code, guess=random_code)
         @role = role
@@ -124,22 +168,16 @@ class Computer
     end
 
     def feedback(guess)
-        guess_to_keypegs(guess).shuffle
+        guess_to_keypegs(guess, @code).shuffle
     end
 
     def set_role(player)
         player.role == "codebreaker" ? @role = "codemaker" : @role = "codebreaker"
-        set_code_message
     end
 
     def guess_code(code)
-        @guess.each_with_index do |color, index|
-            if get_matches(code, @guess)[index]
-                next
-            else
-                @guess[index] = random_color
-            end
-        end
+        lock_matching_pegs(code, @guess)
+        include_half_matching_pegs(code, @guess)
 
         @guess
     end
@@ -147,46 +185,53 @@ class Computer
 
     private
 
-    def guess_to_keypegs(guess, keypegs=Array.new)
-        guess.each_with_index do |peg, i|
-            if guess[i] == @code[i]
-                keypegs.push(Peg.new("red"))
-            elsif guess[i] != @code[i] && @code.include?(guess[i])
-                keypegs.push(Peg.new("white"))
-            end
-        end
-
-        keypegs
-    end
-
-    def random_code
-        colors = ["black", "white", "blue", "red", "yellow", "green"]
-        Array.new(4) {colors.sample}
-    end
-
-    def random_color
-        colors = ["black", "white", "blue", "red", "yellow", "green"]
-        colors.sample
-    end
-
-    def set_code_message
-        puts "\nThe computer has set the code.\n"
-    end
-
-    def get_matches(code, guess)
+    def get_half_matches(code, guess)
         matches = []
-
-        code.each_with_index do |color, index|
-            matches.push(code[index] === guess[index] ? true : false)
+        code.each_with_index do |peg, i|
+            if guess[i] != code[i] && get_colors(code).include?(guess[i].color)
+                matches.push(guess[i].color)
+            end
         end
 
         matches
     end
+
+    def include_half_matching_pegs(code, guess)
+        half_pegs = get_half_matches(code, guess).shuffle
+
+        guess.each do |peg|
+            if peg.locked
+                next
+            else
+                peg.color = random_color
+            end
+        end
+
+        while half_pegs - get_colors(guess) != []
+            guess.each do |peg|
+                if peg.locked
+                    next
+                elsif !half_pegs.empty?
+                    peg.color = half_pegs[0]
+                    half_pegs.shift
+                end
+            end
+        end
+    end
+
+    def lock_matching_pegs(code, guess)
+        code.each_with_index do |peg, index|
+            if code[index].color === guess[index].color
+                guess[index].locked = true
+            end
+        end
+    end
 end
 
 class Game
-    include Validation
     attr_reader :player, :computer, :turn
+    include Validation
+    include CodeTools
 
     def initialize(player, computer, board=Board.new, turn=0)
         @board = board
@@ -204,15 +249,22 @@ class Game
     private
 
     def play_as_codemaker
-        player.choose_code
+        @player.choose_code
         
         while true
-            puts "\nThe Computer is thinking...\n"
-            sleep 2
-            guess = @computer.guess_code(@player.code)
-            puts "\nThe Computer has guessed #{guess.join(" ")}.\n"
+            computer_thinking_message
 
-            if computer_correct_guess?
+            guess = @computer.guess_code(@player.code)
+
+            while already_guessed_code?(@computer.guess, @board)
+                guess = @computer.guess_code(@player.code)
+            end 
+            
+            @board.set_codepegs(@computer.guess, @turn)
+            @board.set_keypegs(guess_to_keypegs(@computer.guess, @player.code), @turn)
+            computer_guess_message(@computer.guess)
+
+            if @board.cracked_code?
                 codemaker_loss_message
                 return
             end
@@ -227,8 +279,10 @@ class Game
     end
 
     def play_as_codebreaker
+        set_code_message
+
         while true
-            puts "\n#{self.player.name}, please guess the code:\n"
+            puts "\n#{@player.name}, please guess the code:\n"
             guess = gets.chomp
             
             while !valid?(guess)
@@ -236,19 +290,14 @@ class Game
                 guess = gets.chomp
             end
 
-            guess = guess.split
-            guess.each_with_index do |color, index|
-                @board.set_color(@turn, index, color, "codepeg")
-            end
+            guess = colors_to_codepegs(guess)
+            @board.set_codepegs(guess, @turn)
 
             feedback = @computer.feedback(guess)
-            puts "\nThe Computer has placed #{feedback.length} keypeg(s):"
-            feedback.each_with_index do |peg, index| 
-                @board.set_color(@turn, index, peg.color, "keypeg")
-                puts peg.color
-            end
+            @board.set_keypegs(feedback, @turn)
+            feedback_message(feedback)
 
-            if @board.win?
+            if @board.cracked_code?
                 codebreaker_winner_message
                 return
             end
@@ -263,7 +312,19 @@ class Game
     end
 
     def computer_correct_guess?
-        @computer.guess == @player.code ? true : false
+        @computer.guess.each_with_index do |peg, i|
+            return false if @computer.guess[i].color != @player.code[i].color
+        end
+
+        true
+    end
+
+    def already_guessed_code?(guess, board)
+        board.codepegs.each do |set|
+            return true if get_colors(guess) == get_colors(set)
+        end
+        
+        return false
     end
 
     def guess_error
@@ -273,7 +334,9 @@ class Game
 
     def codebreaker_loss_message
         puts "\nSorry #{@player.name}, you didn't break the code this time!"
-        puts "The code was: #{@computer.code}."
+        puts "\nThe code was:"
+        @computer.code.each {|codepeg| print "#{codepeg.color} "}
+        puts ""
     end
 
     def codebreaker_winner_message
@@ -290,6 +353,26 @@ class Game
 
     def game_over_message
         puts "\nGame Over! Thanks for playing!"
+    end
+
+    def set_code_message
+        puts "\nThe computer has set the code.\n"
+    end
+
+    def computer_guess_message(guess)
+        puts "\nThe Computer has guessed:\n"
+        guess.each {|peg| print "#{peg.color} "}
+        puts ""
+    end
+
+    def computer_thinking_message
+        puts "\nThe Computer is thinking...\n"
+        sleep 2
+    end
+
+    def feedback_message(feedback)
+        puts "\nThe Computer has placed #{feedback.length} keypeg(s):"
+        feedback.each {|keypeg| puts keypeg.color}
     end
 end
 
