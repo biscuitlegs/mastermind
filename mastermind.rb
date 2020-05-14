@@ -1,6 +1,4 @@
-#!/usr/bin/ruby
-require 'pry'
-#make computer set codepegs when it guesses
+require 'colorize'
 
 module Validation
     def valid?(guess_or_code)
@@ -361,7 +359,7 @@ class Game
 
     def computer_guess_message(guess)
         puts "\nThe Computer has guessed:\n"
-        guess.each {|peg| print "#{peg.color} "}
+        guess.each {|peg| print "#{peg.color.colorize(peg.color.to_sym)} "}
         puts ""
     end
 
@@ -372,7 +370,7 @@ class Game
 
     def feedback_message(feedback)
         puts "\nThe Computer has placed #{feedback.length} keypeg(s):"
-        feedback.each {|keypeg| puts keypeg.color}
+        feedback.each {|keypeg| puts "#{keypeg.color.colorize(keypeg.color.to_sym)}"}
     end
 end
 
